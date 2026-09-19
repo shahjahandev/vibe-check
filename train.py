@@ -1,7 +1,9 @@
-"""Train a lightweight text-sentiment model and save it for the Streamlit app."""
+"""Train the sentiment model and freeze reference feature distributions."""
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import joblib
@@ -11,8 +13,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 
-DATA_PATH = Path(__file__).parent / "data" / "vibes.csv"
-MODEL_PATH = Path(__file__).parent / "model" / "vibe_model.joblib"
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "src"))
+
+from vibe_check.config import settings  # noqa: E402
+from vibe_check.drift import build_reference_stats, reference_to_json  # noqa: E402
+from vibe_check.features import extract_features  # noqa: E402
 
 
 def build_pipeline() -> Pipeline:
@@ -41,17 +47,30 @@ def build_pipeline() -> Pipeline:
 
 
 def main() -> None:
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv(settings.training_data_path)
     pipe = build_pipeline()
 
-    # Small curated set: report CV accuracy, then fit on everything for the app.
     scores = cross_val_score(pipe, df["text"], df["label"], cv=5)
     print(f"5-fold CV accuracy: {scores.mean():.3f} ± {scores.std():.3f}")
 
     pipe.fit(df["text"], df["label"])
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(pipe, MODEL_PATH)
-    print(f"Saved model → {MODEL_PATH}")
+
+    feature_rows = [extract_features(text) for text in df["text"].astype(str)]
+    reference = build_reference_stats(feature_rows, n_bins=10)
+
+    settings.model_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(pipe, settings.model_path)
+    settings.reference_stats_path.write_text(
+        json.dumps(reference_to_json(reference), indent=2),
+        encoding="utf-8",
+    )
+
+    # Clear stale live window so a fresh deploy starts clean.
+    if settings.live_window_path.exists():
+        settings.live_window_path.unlink()
+
+    print(f"Saved model → {settings.model_path}")
+    print(f"Saved reference stats → {settings.reference_stats_path}")
 
 
 if __name__ == "__main__":

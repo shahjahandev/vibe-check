@@ -1,57 +1,111 @@
 # Vibe Check
 
-A tiny **Python + ML** mood reader. Paste any sentence and a scikit-learn model scores whether it feels **positive**, **neutral**, or **negative**.
+Low-latency **sentiment API** with **real-time feature-drift monitoring**.
 
-Useful for journaling, feedback, tweets, or messages. Fun enough to click around with the sample buttons.
+This is not just a model notebook. It shows the ML lifecycle past training: validated payloads, fast serving, and post-deployment observability that alerts when live input distributions diverge from the training reference (data quality issues or shifting consumer language).
 
-## Quick start
+## Why this project
+
+| Concern | What you get |
+| --- | --- |
+| Serving | FastAPI `/predict` with millisecond-scale sklearn inference |
+| Validation | Pydantic request models (length, blank text, optional `request_id`) |
+| Observability | Sliding-window **PSI** (Population Stability Index) on text features |
+| Hygiene | Type hints, package layout under `src/`, pytest suite, Docker |
+
+## Architecture
+
+```
+client ──► POST /predict ──► ModelService (joblib pipeline)
+                │
+                └──► DriftMonitor (feature window vs reference histograms)
+                           │
+                           └──► GET /drift  (alert when max PSI ≥ threshold)
+```
+
+Monitored features: `char_count`, `word_count`, `avg_word_len`, `exclamation_rate`, `question_rate`, `uppercase_ratio`, `digit_ratio`.
+
+PSI rule of thumb: `< 0.10` stable · `0.10–0.25` mild shift · `≥ 0.25` alert.
+
+## Project layout
+
+```
+src/vibe_check/
+  api.py            FastAPI routes
+  schemas.py        Request/response contracts
+  model_service.py  Inference wrapper
+  features.py       Monitoring feature extraction
+  drift.py          PSI math + reference histograms
+  monitor.py        Live sliding window + alerts
+  config.py         Env-configurable settings
+tests/              Unit + API tests
+train.py            Train model + freeze reference stats
+ui.py               Optional Streamlit client
+Dockerfile
+docker-compose.yml
+```
+
+## Quick start (local)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python train.py
-streamlit run app.py
+PYTHONPATH=src uvicorn vibe_check.api:app --host 0.0.0.0 --port 8000
 ```
 
-Then open the local URL Streamlit prints (usually `http://localhost:8501`).
-
-## What's inside
-
-| File | Role |
-| --- | --- |
-| `app.py` | Streamlit UI |
-| `train.py` | Trains and saves the model |
-| `data/vibes.csv` | Labeled training phrases |
-| `model/vibe_model.joblib` | Saved TF-IDF + logistic regression pipeline |
-
-## Model
-
-- **Features:** TF-IDF unigrams + bigrams
-- **Classifier:** logistic regression (balanced classes)
-- **Labels:** `positive` · `neutral` · `negative`
-
-Retrain anytime after editing `data/vibes.csv`:
+### Try it
 
 ```bash
-python train.py
+curl -s localhost:8000/health | jq
+
+curl -s -X POST localhost:8000/predict \
+  -H 'content-type: application/json' \
+  -d '{"text":"We shipped it and the whole team is celebrating!","request_id":"demo-1"}' | jq
+
+curl -s localhost:8000/drift | jq
 ```
 
-## Deploy
+Optional UI (API must be running):
 
-### GitHub
+```bash
+streamlit run ui.py
+```
 
-This repo is meant to live on GitHub. Push it, then anyone can clone and run locally.
+## Tests
 
-### Streamlit Community Cloud (optional live demo)
+```bash
+PYTHONPATH=src pytest -q
+```
 
-1. Push this repo to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Deploy with:
-   - Main file: `app.py`
-   - Python version: 3.11+
-4. Add an app startup command / note that the model file is committed, or set a build step to run `python train.py`
+## Docker
+
+```bash
+docker compose up --build
+```
+
+API: http://localhost:8000/docs
+
+## Configuration
+
+All settings use the `VIBE_` prefix:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VIBE_WINDOW_SIZE` | `100` | Live feature window length |
+| `VIBE_MIN_WINDOW_FOR_DRIFT` | `30` | Samples before PSI is computed |
+| `VIBE_PSI_ALERT_THRESHOLD` | `0.25` | Alert when max feature PSI crosses this |
+| `VIBE_MODEL_PATH` | `artifacts/vibe_model.joblib` | Model artifact |
+| `VIBE_REFERENCE_STATS_PATH` | `artifacts/reference_stats.json` | Training feature histograms |
+
+## API surface
+
+- `GET /health` — liveness + model/reference status
+- `POST /predict` — validated inference; updates the drift window
+- `GET /drift` — current PSI report and alert flag
+- Interactive docs at `/docs`
 
 ## License
 
-MIT — do whatever you want with it.
+MIT

@@ -7,9 +7,13 @@ venv/
 env/
 *.egg-info/
 .DS_Store
-.streamlit/secrets.toml
 .pytest_cache/
 .mypy_cache/
-*.log
+.ruff_cache/
+.coverage
+htmlcov/
 .idea/
 .vscode/
+.streamlit/secrets.toml
+*.log
+artifacts/live_window.jsonl

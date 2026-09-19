@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      VIBE_PSI_ALERT_THRESHOLD: "0.25"
+      VIBE_WINDOW_SIZE: "100"
+      VIBE_MIN_WINDOW_FOR_DRIFT: "30"
+    volumes:
+      - ./artifacts:/app/artifacts
+    restart: unless-stopped
